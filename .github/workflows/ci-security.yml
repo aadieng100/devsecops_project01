@@ -1,6 +1,5 @@
 name: DevSecOps CI Pipeline
 
-# Trigger the workflow on pull requests targeting the master branch
 on:
   pull_request:
     branches: [ master ]
@@ -13,8 +12,16 @@ jobs:
     # Step 1: Clone the repository code onto the runner
     - name: Checkout source code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0 # Crucial for Gitleaks to scan the entire commit history
 
-    # Step 2: Install Java 17 runtime environment
+    # Step 2: Run Gitleaks Secret Scan (Fail Fast if secrets are found)
+    - name: Run Gitleaks Secret Scan
+      uses: gitleaks/gitleaks-action@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    # Step 3: Install Java 17 runtime environment
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -22,11 +29,11 @@ jobs:
         distribution: 'temurin'
         cache: 'maven'
 
-    # Step 3: Run unit tests using the H2 in-memory profile
+    # Step 4: Run unit tests using the H2 in-memory profile
     - name: Run unit tests
       run: ./mvnw clean test
 
-    # Step 4: Validate that the multi-stage Dockerfile builds successfully
+    # Step 5: Validate that the multi-stage Dockerfile builds successfully
     - name: Build secure Docker image
       run: |
         docker build -t user-api:test .
