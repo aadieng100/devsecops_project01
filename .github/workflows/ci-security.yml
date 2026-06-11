@@ -51,6 +51,7 @@ jobs:
       with:
         image-ref: 'user-api:${{ github.sha }}'
         format: 'table'
-        exit-code: '1' # This forces the pipeline to FAIL if severe vulnerabilities are found
+        exit-code: '1'
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
+        trivyignore: '.trivyignore' # Explicitly telling Trivy to respect our exception file

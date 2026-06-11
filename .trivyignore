@@ -1,0 +1,3 @@
+# Accepted risk: Debian marked this as will_not_fix for zlib. 
+# It does not impact our Spring Boot application logic.
+CVE-2023-45853
