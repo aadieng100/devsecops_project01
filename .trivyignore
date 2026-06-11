@@ -1,0 +1,18 @@
+# Accepted risk: Debian marked this as will_not_fix for zlib. 
+# It does not impact our Spring Boot application logic.
+CVE-2023-45853
+
+# Accepted risk: Upstream OpenJDK base image vulnerability under evaluation.
+# We accept this risk temporarily until Google Distroless releases a patched runtime.
+CVE-2026-34282
+
+# Accepted risk: Upstream openjdk-17-jre-headless patch pending from Google registry.
+CVE-2026-22016
+
+# Accepted risk: System C-libraries bundled in Debian base layer for graphics/fonts/XML.
+# Unexploitable: Our application is a headless JSON REST API.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2023-25193
+CVE-2026-41254

@@ -11,22 +11,15 @@ RUN ./mvnw dependency:go-offline
 COPY src ./src
 RUN ./mvnw clean package -DskipTests
 
-# --- Stage 2: Runtime environment ---
-FROM eclipse-temurin:17-jre-alpine
+# --- Stage 2: Hardened Runtime environment using Google Distroless ---
+FROM gcr.io/distroless/java17-debian12:nonroot
 WORKDIR /app
-
-# SECURITY: Create a non-root group and user
-RUN addgroup -S devsecopsgroup && adduser -S devsecopsuser -G devsecopsgroup
 
 # Copy the compiled JAR from the builder stage
 COPY --from=builder /app/target/*.jar app.jar
 
-# SECURITY: Change ownership of the application files to the non-root user
-RUN chown -R devsecopsuser:devsecopsgroup /app
-
-# SECURITY: Switch to the non-root user
-USER devsecopsuser
-
 EXPOSE 8080
 
+# Run the jar file securely 
+# Note: Distroless automatically runs as the low-privilege "nonroot" user via the tag
 ENTRYPOINT ["java", "-jar", "app.jar"]
