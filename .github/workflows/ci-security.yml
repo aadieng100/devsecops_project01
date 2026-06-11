@@ -46,9 +46,9 @@ jobs:
         docker build -t user-api:${{ github.sha }} .
 
     # Step 7: Run SCA Scan (Trivy) on the compiled Docker image
-    # Note: Pinned to a specific secure commit SHA to prevent supply chain tampering
+    # Note: Using a verified, signed release tag post-supply chain remediation
     - name: Run Trivy SCA Scan
-      uses: aquasecurity/trivy-action@062f2592684a31de07d4323207d99a4c4c165b38
+      uses: aquasecurity/trivy-action@v0.36.0
       with:
         image-ref: 'user-api:${{ github.sha }}'
         format: 'table'
