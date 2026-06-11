@@ -43,7 +43,7 @@ jobs:
     # Step 6: Build our secure multi-stage Docker image
     - name: Build secure Docker image
       run: |
-        docker build -t user-api:${{ github.sha }} .
+        docker build --pull -t user-api:${{ github.sha }} .
 
     # Step 7: Run SCA Scan (Trivy) on the compiled Docker image
     # Note: Using a verified, signed release tag post-supply chain remediation

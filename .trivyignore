@@ -5,3 +5,6 @@ CVE-2023-45853
 # Accepted risk: Upstream OpenJDK base image vulnerability under evaluation.
 # We accept this risk temporarily until Google Distroless releases a patched runtime.
 CVE-2026-34282
+
+# Accepted risk: Upstream openjdk-17-jre-headless patch pending from Google registry.
+CVE-2026-22016
