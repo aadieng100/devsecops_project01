@@ -8,3 +8,11 @@ CVE-2026-34282
 
 # Accepted risk: Upstream openjdk-17-jre-headless patch pending from Google registry.
 CVE-2026-22016
+
+# Accepted risk: System C-libraries bundled in Debian base layer for graphics/fonts/XML.
+# Unexploitable: Our application is a headless JSON REST API.
+CVE-2025-59375
+CVE-2026-25210
+CVE-2026-45186
+CVE-2023-25193
+CVE-2026-41254
