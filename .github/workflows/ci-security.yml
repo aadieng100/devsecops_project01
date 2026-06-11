@@ -25,8 +25,8 @@ jobs:
     - name: Run Semgrep SAST Scan
       uses: semgrep/semgrep-action@v1
       with:
-        config: p/owasp-top-10
-      # 'p/owasp-top-10' focuses on the top 10 critical web application vulnerabilities
+        config: p/default
+      # Semgrep's official, highly reliable combination of rules including security audits and best practices for Java
 
     # Step 4: Install Java 17 runtime environment
     - name: Set up JDK 17
