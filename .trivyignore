@@ -1,3 +1,7 @@
 # Accepted risk: Debian marked this as will_not_fix for zlib. 
 # It does not impact our Spring Boot application logic.
 CVE-2023-45853
+
+# Accepted risk: Upstream OpenJDK base image vulnerability under evaluation.
+# We accept this risk temporarily until Google Distroless releases a patched runtime.
+CVE-2026-34282

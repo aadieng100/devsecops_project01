@@ -46,12 +46,12 @@ jobs:
         docker build -t user-api:${{ github.sha }} .
 
     # Step 7: Run SCA Scan (Trivy) on the compiled Docker image
+    # Note: Pinned to a specific secure commit SHA to prevent supply chain tampering
     - name: Run Trivy SCA Scan
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@062f2592684a31de07d4323207d99a4c4c165b38
       with:
         image-ref: 'user-api:${{ github.sha }}'
         format: 'table'
         exit-code: '1'
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
-        trivyignore: '.trivyignore' # Explicitly telling Trivy to respect our exception file
