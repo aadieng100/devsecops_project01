@@ -97,13 +97,11 @@ resource "aws_security_group" "app_sg" {
 
 # 9. Launch the EC2 Virtual Server
 resource "aws_instance" "app_server" {
-  ami           = "ami-0c7217cdde317cfec" # Official Ubuntu 22.04 LTS AMI for us-east-1
-  instance_type = "t2.micro"             # Free-tier eligible tiny instance
-  subnet_id     = aws_subnet.public_subnet.id
-  vpc_security_group_ids = [aws_security_group.app_sg.id]
-  
-  # nosemgrep: terraform.aws.security.aws-ec2-has-public-ip.aws-ec2-has-public-ip
-  associate_public_ip_address = true
+  ami                         = "ami-0c7217cdde317cfec" 
+  instance_type               = "t2.micro"             
+  subnet_id                   = aws_subnet.public_subnet.id
+  vpc_security_group_ids      = [aws_security_group.app_sg.id]
+  associate_public_ip_address = true 
 
   tags = {
     Name        = "devsecops-app-server"
