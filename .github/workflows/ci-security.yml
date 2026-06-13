@@ -7,6 +7,11 @@ on:
 jobs:
   build-and-test:
     runs-on: ubuntu-latest
+
+    # NEW: Grant the runtime token permission to read code and write container packages
+    permissions:
+      contents: read
+      packages: write
     
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
