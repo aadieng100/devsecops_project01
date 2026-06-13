@@ -102,19 +102,24 @@ jobs:
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
-    # Step 11: Expanded health check loop to give the container engine adequate boot time
+    # Step 11: Advanced health check loop with explicit HTTP status code tracing
     - name: Wait for Application Initialization
       run: |
-        echo "Polling application endpoint http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users ..."
-        for i in {1..50}; do
-          if curl -s -o /dev/null -w "%{http_code}" http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users | grep -E "200|404|401" >> /dev/null; then
-            echo "Application is live and responding!"
+        echo "Polling http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users (max 15 min)..."
+        for i in {1..60}; do
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            --connect-timeout 5 --max-time 10 \
+            http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users || echo "000")
+          
+          echo "Attempt $i/60 — HTTP Response: $HTTP_CODE"
+          
+          if echo "$HTTP_CODE" | grep -qE "^(200|201|401|403|404)$"; then
+            echo "Application is live and reachable!"
             exit 0
           fi
-          echo "App container bootstrapping... Retrying in 5 seconds ($i/50)"
-          sleep 5
+          sleep 15
         done
-        echo "Application failed to become responsive in time." && exit 1
+        echo "Application failed to become responsive after 15 minutes." && exit 1
 
     # Step 12: Run OWASP ZAP DAST Baseline Scan
     - name: Run OWASP ZAP DAST Baseline Scan

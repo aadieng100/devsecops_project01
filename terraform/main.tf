@@ -123,23 +123,35 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
-  # NEW: Hardened startup script utilizing optimized convenience streams
+# Hardened startup script with strict output logging and container health tracking
   user_data = <<-EOF
               #!/bin/bash
+              set -x
+              exec > /var/log/user-data.log 2>&1
               export DEBIAN_FRONTEND=noninteractive
-              
-              # Download and run the official optimized Docker engine deployment engine
-              curl -fsSL https://get.docker.com -o get-docker.sh
-              sh get-docker.sh
-              
+
+              echo "=== Starting Bootstrap ==="
+              # Install Docker using Ubuntu's native pre-packaged stream
+              apt-get update -y
+              apt-get install -y --no-install-recommends docker.io
+
               systemctl start docker
               systemctl enable docker
 
-              # Log in to GitHub Container Registry using short-lived pipeline credentials
+              # Log in to GitHub Container Registry
               echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
 
               # Pull and run the Spring Boot API securely on host port 8080
+              echo "Pulling target image: ${var.image_tag}"
               docker run -d -p 8080:8080 --name staging-app "${var.image_tag}"
+              
+              echo "=== Post-Deployment Container Status ==="
+              sleep 5
+              docker ps -a
+              echo "=== Initial Container Application Logs ==="
+              docker logs staging-app
+              
+              echo "Bootstrap complete!"
               EOF
 
   tags = {
