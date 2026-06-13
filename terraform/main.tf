@@ -39,7 +39,7 @@ resource "aws_internet_gateway" "igw" {
 resource "aws_subnet" "public_subnet" {
   vpc_id                  = aws_vpc.main_vpc.id
   cidr_block              = "10.0.1.0/24"
-  map_public_ip_on_launch = true
+map_public_ip_on_launch = false # SECURE: Stop auto-assigning public IPs to everything
   availability_zone       = "us-east-1a"
 
   tags = {
@@ -101,6 +101,7 @@ resource "aws_instance" "app_server" {
   instance_type = "t2.micro"             # Free-tier eligible tiny instance
   subnet_id     = aws_subnet.public_subnet.id
   vpc_security_group_ids = [aws_security_group.app_sg.id]
+associate_public_ip_address = true # SECURE: Explicitly assign a public IP ONLY to this application container
 
   tags = {
     Name        = "devsecops-app-server"
