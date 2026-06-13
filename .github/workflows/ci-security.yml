@@ -11,6 +11,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      issues: write # NEW: Allows OWASP ZAP to cleanly document DAST findings
     
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
