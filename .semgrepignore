@@ -1,0 +1,3 @@
+# Tell Semgrep to ignore the infrastructure folder to prevent duplicate alerts.
+# Checkov handles this entire directory natively.
+terraform/

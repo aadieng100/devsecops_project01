@@ -55,3 +55,12 @@ jobs:
         exit-code: '1'
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
+
+    # Step 8: Run IaC Scan (Checkov) on Terraform configurations
+    - name: Run Checkov IaC Scan
+      uses: bridgecrewio/checkov-action@master
+      with:
+        directory: terraform/
+        framework: terraform
+        # soft_fail: false -> This will force the pipeline to CRASH if security flaws are found in our cloud code
+        soft_fail: false
