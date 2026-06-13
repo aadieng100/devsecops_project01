@@ -123,6 +123,21 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
+  # Startup script to bootstrap Docker and run our Distroless API container
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update -y
+              apt-get install -y docker.io
+              systemctl start docker
+              systemctl enable docker
+
+              # Log in to GitHub Container Registry using short-lived pipeline credentials
+              echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
+
+              # Pull and run the Spring Boot API securely on host port 8080
+              docker run -d -p 8080:8080 --name staging-app "${var.image_tag}"
+              EOF
+
   tags = {
     Name        = "devsecops-app-server"
     Environment = "staging"
