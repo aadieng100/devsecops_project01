@@ -123,6 +123,67 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
+  # Telemetry-hardened startup script with companion storage blocks and continuous log streaming
+  user_data = <<-EOF
+              #!/bin/bash
+              set -x
+              export DEBIAN_FRONTEND=noninteractive
+
+              echo "=== SYSTEM CHECK: PROVISIONING ENGINE ==="
+              apt-get update -y
+              apt-get install -y --no-install-recommends docker.io
+              systemctl start docker
+              systemctl enable docker
+
+              echo "=== REGISTRY CHECK: SECURING ACCESS ==="
+              echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
+
+              echo "=== NETWORK CHECK: CREATING ISOLATED BRIDGE ==="
+              docker network create staging-network
+
+              echo "=== COMPANION CHECK: RUNNING LIGHTWEIGHT STAGING DATABASE ==="
+              docker run -d \
+                --name staging-db \
+                --network staging-network \
+                -e POSTGRES_DB=userdb \
+                -e POSTGRES_USER=postgres \
+                -e POSTGRES_PASSWORD=postgres \
+                postgres:15-alpine
+
+              # CRITICAL: Wait for PostgreSQL to finish initializing its data directory
+              # before starting Spring Boot. Without this, Spring Boot connects too early,
+              # gets a "Connection refused", and the JVM crashes — killing port 8080 forever.
+              echo "=== DATABASE CHECK: WAITING FOR POSTGRES TO ACCEPT CONNECTIONS ==="
+              for i in {1..30}; do
+                if docker exec staging-db pg_isready -U postgres > /dev/null 2>&1; then
+                  echo "PostgreSQL is ready after $i attempts!"
+                  break
+                fi
+                echo "Database initializing... ($i/30)"
+                sleep 2
+              done
+
+              echo "=== RUNTIME CHECK: DEPLOYING API CONTAINER ==="
+              # --restart=on-failure:3 adds a safety net in case of transient startup errors
+              docker run -d \
+                --name staging-app \
+                --network staging-network \
+                --restart=on-failure:3 \
+                -p 8080:8080 \
+                -e SPRING_DATASOURCE_URL=jdbc:postgresql://staging-db:5432/userdb \
+                -e SPRING_DATASOURCE_USERNAME=postgres \
+                -e SPRING_DATASOURCE_PASSWORD=postgres \
+                -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
+                "${var.image_tag}"
+
+              echo "=== TELEMETRY CHECK: ACTIVATING CONTINUOUS LOG STREAMING ==="
+              # The "&" symbol forks this process to the background. 
+              # It will continuously pipe live Java app logs to the AWS system console for the entire run!
+              docker logs -f staging-app &
+
+              echo "=== BOOTSTRAP PIPELINE INITIALIZATION COMPLETE ==="
+              EOF
+
   tags = {
     Name        = "devsecops-app-server"
     Environment = "staging"
