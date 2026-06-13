@@ -123,11 +123,15 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
-  # Startup script to bootstrap Docker and run our Distroless API container
+  # NEW: Hardened startup script utilizing optimized convenience streams
   user_data = <<-EOF
               #!/bin/bash
-              apt-get update -y
-              apt-get install -y docker.io
+              export DEBIAN_FRONTEND=noninteractive
+              
+              # Download and run the official optimized Docker engine deployment engine
+              curl -fsSL https://get.docker.com -o get-docker.sh
+              sh get-docker.sh
+              
               systemctl start docker
               systemctl enable docker
 

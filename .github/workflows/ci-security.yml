@@ -102,16 +102,16 @@ jobs:
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
-    # Step 11: Polling health loop
+    # Step 11: Expanded health check loop to give the container engine adequate boot time
     - name: Wait for Application Initialization
       run: |
         echo "Polling application endpoint http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users ..."
-        for i in {1..20}; do
+        for i in {1..50}; do
           if curl -s -o /dev/null -w "%{http_code}" http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users | grep -E "200|404|401" >> /dev/null; then
             echo "Application is live and responding!"
             exit 0
           fi
-          echo "App container bootstrapping... Retrying in 5 seconds ($i/20)"
+          echo "App container bootstrapping... Retrying in 5 seconds ($i/50)"
           sleep 5
         done
         echo "Application failed to become responsive in time." && exit 1
