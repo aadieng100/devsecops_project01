@@ -8,7 +8,6 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    # NEW: Grant the runtime token permission to read code and write container packages
     permissions:
       contents: read
       packages: write
@@ -44,7 +43,6 @@ jobs:
     - name: Run unit tests
       run: ./mvnw clean test
 
-    # NEW: Securely log into GitHub Packages Registry
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
@@ -52,28 +50,23 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-# Step 6: Build and push the image using a lowercase path name and step id
     - name: Build and Push secure Docker image
-      id: build # 1. Added ID for tracking
+      id: build 
       run: |
         LOW_CASE_REPO=$(echo "ghcr.io/${{ github.repository }}/user-api" | tr '[:upper:]' '[:lower:]')
         docker build --pull -t $LOW_CASE_REPO:${{ github.sha }} .
         docker push $LOW_CASE_REPO:${{ github.sha }}
-        # 2. Changed from $GITHUB_ENV to $GITHUB_OUTPUT
         echo "target_image_tag=$LOW_CASE_REPO:${{ github.sha }}" >> $GITHUB_OUTPUT
 
-    # Step 7: SCA Container Scan
     - name: Run Trivy SCA Scan
       uses: aquasecurity/trivy-action@v0.36.0
       with:
-        # 3. Referenced via explicit step outputs
         image-ref: ${{ steps.build.outputs.target_image_tag }}
         format: 'table'
         exit-code: '1'
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
 
-    # Step 8: IaC Scanning
     - name: Run Checkov IaC Scan
       uses: bridgecrewio/checkov-action@master
       with:
@@ -81,13 +74,11 @@ jobs:
         framework: terraform
         soft_fail: false
 
-    # Step 9: Setup Terraform Engine on the runner
     - name: Setup HashiCorp Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_wrapper: false
 
-    # Step 10: Initialize and Deploy Staging Infrastructure
     - name: Terraform Apply (Provision Environment)
       id: deploy
       run: |
@@ -101,7 +92,6 @@ jobs:
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
-    # Step 11: Updated health check loop to accept valid REST routing responses
     - name: Wait for Application Initialization
       run: |
         echo "Polling http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users (max 15 min)..."
@@ -112,7 +102,6 @@ jobs:
           
           echo "Attempt $i/60 — HTTP Response: $HTTP_CODE"
           
-          # Added 405 to the valid tracking regex below
           if echo "$HTTP_CODE" | grep -qE "^(200|201|401|403|404|405)$"; then
             echo "Application is live and reachable!"
             exit 0
@@ -121,27 +110,33 @@ jobs:
         done
         echo "Application failed to become responsive after 15 minutes." && exit 1
 
-    # NEW STEP 12: TELEMETRY INTERCEPTOR (Runs ONLY if Step 11 fails)
+    # ==========================================
+    # ADDED BACK: OWASP ZAP LIVE EXPLOIT SCAN
+    # ==========================================
+    - name: Run OWASP ZAP DAST Baseline Scan
+      uses: zaproxy/action-baseline@v0.14.0
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        target: 'http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users'
+        # fail_action: false ensures the pipeline continues to execution even if vulnerabilities 
+        # are detected, guaranteeing that the teardown step runs to destroy our AWS resources.
+        fail_action: false
+
+    # TELEMETRY INTERCEPTOR (Runs ONLY if the health check loop crashes)
     - name: Fetch EC2 Boot & Application Logs
       if: failure()
       run: |
         echo "Pipeline check failed. Querying AWS API for real-time console telemetry..."
-        
-        # 1. Extract the Instance ID dynamically using our new Terraform output
         cd terraform
         INSTANCE_ID=$(terraform output -raw staging_instance_id)
-        
         echo "Target Instance identified: $INSTANCE_ID"
         echo "========================================================================"
         echo "                      AWS REMOTE SERVER SYSTEM LOGS                     "
         echo "========================================================================"
-        
-        # 2. Call the AWS API to extract the system console buffers
         aws ec2 get-console-output --instance-id $INSTANCE_ID --output text
-        
         echo "========================================================================"
 
-    # Step 13: CRITICAL TEARDOWN (Always executes to protect your wallet)
+    # CRITICAL TEARDOWN (Always executes to protect your wallet and credits)
     - name: Terraform Destroy (Teardown Environment)
       if: always()
       run: |
