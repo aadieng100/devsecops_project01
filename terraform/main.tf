@@ -123,35 +123,51 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
-  # Telemetry-enabled startup script streaming directly to AWS System Console
+  # Telemetry-hardened startup script with companion storage blocks and continuous log streaming
   user_data = <<-EOF
               #!/bin/bash
               set -x
               export DEBIAN_FRONTEND=noninteractive
 
-              echo "=== SYSTEM CHECK: INITIALIZING BOOTSTRAP ==="
+              echo "=== SYSTEM CHECK: PROVISIONING ENGINE ==="
               apt-get update -y
               apt-get install -y --no-install-recommends docker.io
-
-              echo "=== DOCKER CHECK: STARTING ENGINE ==="
               systemctl start docker
               systemctl enable docker
-              systemctl status docker --no-pager
 
-              echo "=== REGISTRY CHECK: AUTHENTICATING TO GHCR ==="
+              echo "=== REGISTRY CHECK: SECURING ACCESS ==="
               echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
 
-              echo "=== RUNTIME CHECK: STREAMING APP CONTAINER ==="
-              docker run -d -p 8080:8080 --name staging-app "${var.image_tag}"
+              echo "=== NETWORK CHECK: CREATING ISOLATED BRIDGE ==="
+              docker network create staging-network
 
-              echo "=== CONTAINER CHECK: HEALTH DIAGNOSTICS ==="
-              sleep 5
-              docker ps -a
-              
-              echo "=== APPLICATION CHECK: CORE SPRING BOOT LOGS ==="
-              docker logs staging-app
-              
-              echo "=== BOOTSTRAP COMPLETE ==="
+              echo "=== COMPANION CHECK: RUNNING LIGHTWEIGHT STAGING DATABASE ==="
+              docker run -d \
+                --name staging-db \
+                --network staging-network \
+                -e POSTGRES_DB=userdb \
+                -e POSTGRES_USER=postgres \
+                -e POSTGRES_PASSWORD=postgres \
+                postgres:15-alpine
+
+              echo "=== RUNTIME CHECK: DEPLOYING API CONTAINER ==="
+              # We pass standard Spring Boot environment configurations to auto-bind to our local database container
+              docker run -d \
+                --name staging-app \
+                --network staging-network \
+                -p 8080:8080 \
+                -e SPRING_DATASOURCE_URL=jdbc:postgresql://staging-db:5432/userdb \
+                -e SPRING_DATASOURCE_USERNAME=postgres \
+                -e SPRING_DATASOURCE_PASSWORD=postgres \
+                -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
+                "${var.image_tag}"
+
+              echo "=== TELEMETRY CHECK: ACTIVATING CONTINUOUS LOG STREAMING ==="
+              # The "&" symbol forks this process to the background. 
+              # It will continuously pipe live Java app logs to the AWS system console for the entire run!
+              docker logs -f staging-app &
+
+              echo "=== BOOTSTRAP PIPELINE INITIALIZATION COMPLETE ==="
               EOF
 
   tags = {
