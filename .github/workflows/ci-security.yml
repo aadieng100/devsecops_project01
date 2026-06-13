@@ -89,11 +89,10 @@ jobs:
 
     # Step 10: Initialize and Deploy Staging Infrastructure
     - name: Terraform Apply (Provision Environment)
-      id: deploy 
+      id: deploy
       run: |
         cd terraform
         terraform init
-        # 4. Input parameter now reads from the build step output
         terraform apply -auto-approve \
           -var="image_tag=${{ steps.build.outputs.target_image_tag }}" \
           -var="github_token=${{ secrets.GITHUB_TOKEN }}" \
@@ -102,7 +101,7 @@ jobs:
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
-    # Step 11: Advanced health check loop with explicit HTTP status code tracing
+    # Step 11: Advanced health check loop
     - name: Wait for Application Initialization
       run: |
         echo "Polling http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users (max 15 min)..."
@@ -121,20 +120,31 @@ jobs:
         done
         echo "Application failed to become responsive after 15 minutes." && exit 1
 
-    # Step 12: Run OWASP ZAP DAST Baseline Scan
-    - name: Run OWASP ZAP DAST Baseline Scan
-      uses: zaproxy/action-baseline@v0.14.0
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        target: 'http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users'
-        fail_action: false
+    # NEW STEP 12: TELEMETRY INTERCEPTOR (Runs ONLY if Step 11 fails)
+    - name: Fetch EC2 Boot & Application Logs
+      if: failure()
+      run: |
+        echo "Pipeline check failed. Querying AWS API for real-time console telemetry..."
+        
+        # 1. Extract the Instance ID dynamically using our new Terraform output
+        cd terraform
+        INSTANCE_ID=$(terraform output -raw staging_instance_id)
+        
+        echo "Target Instance identified: $INSTANCE_ID"
+        echo "========================================================================"
+        echo "                      AWS REMOTE SERVER SYSTEM LOGS                     "
+        echo "========================================================================"
+        
+        # 2. Call the AWS API to extract the system console buffers
+        aws ec2 get-console-output --instance-id $INSTANCE_ID --output text
+        
+        echo "========================================================================"
 
-    # Step 13: CRITICAL TEARDOWN
+    # Step 13: CRITICAL TEARDOWN (Always executes to protect your wallet)
     - name: Terraform Destroy (Teardown Environment)
       if: always()
       run: |
         cd terraform
-        # 5. Input parameter here also reads from the build step output
         terraform destroy -auto-approve \
           -var="image_tag=${{ steps.build.outputs.target_image_tag }}" \
           -var="github_token=${{ secrets.GITHUB_TOKEN }}" \

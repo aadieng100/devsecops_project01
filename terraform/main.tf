@@ -123,35 +123,35 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
-# Hardened startup script with strict output logging and container health tracking
+  # Telemetry-enabled startup script streaming directly to AWS System Console
   user_data = <<-EOF
               #!/bin/bash
               set -x
-              exec > /var/log/user-data.log 2>&1
               export DEBIAN_FRONTEND=noninteractive
 
-              echo "=== Starting Bootstrap ==="
-              # Install Docker using Ubuntu's native pre-packaged stream
+              echo "=== SYSTEM CHECK: INITIALIZING BOOTSTRAP ==="
               apt-get update -y
               apt-get install -y --no-install-recommends docker.io
 
+              echo "=== DOCKER CHECK: STARTING ENGINE ==="
               systemctl start docker
               systemctl enable docker
+              systemctl status docker --no-pager
 
-              # Log in to GitHub Container Registry
+              echo "=== REGISTRY CHECK: AUTHENTICATING TO GHCR ==="
               echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
 
-              # Pull and run the Spring Boot API securely on host port 8080
-              echo "Pulling target image: ${var.image_tag}"
+              echo "=== RUNTIME CHECK: STREAMING APP CONTAINER ==="
               docker run -d -p 8080:8080 --name staging-app "${var.image_tag}"
-              
-              echo "=== Post-Deployment Container Status ==="
+
+              echo "=== CONTAINER CHECK: HEALTH DIAGNOSTICS ==="
               sleep 5
               docker ps -a
-              echo "=== Initial Container Application Logs ==="
+              
+              echo "=== APPLICATION CHECK: CORE SPRING BOOT LOGS ==="
               docker logs staging-app
               
-              echo "Bootstrap complete!"
+              echo "=== BOOTSTRAP COMPLETE ==="
               EOF
 
   tags = {
