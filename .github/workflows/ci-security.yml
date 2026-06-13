@@ -101,7 +101,7 @@ jobs:
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
-    # Step 11: Advanced health check loop
+    # Step 11: Updated health check loop to accept valid REST routing responses
     - name: Wait for Application Initialization
       run: |
         echo "Polling http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users (max 15 min)..."
@@ -112,7 +112,8 @@ jobs:
           
           echo "Attempt $i/60 — HTTP Response: $HTTP_CODE"
           
-          if echo "$HTTP_CODE" | grep -qE "^(200|201|401|403|404)$"; then
+          # Added 405 to the valid tracking regex below
+          if echo "$HTTP_CODE" | grep -qE "^(200|201|401|403|404|405)$"; then
             echo "Application is live and reachable!"
             exit 0
           fi
