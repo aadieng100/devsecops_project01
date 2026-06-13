@@ -150,11 +150,25 @@ resource "aws_instance" "app_server" {
                 -e POSTGRES_PASSWORD=postgres \
                 postgres:15-alpine
 
+              # CRITICAL: Wait for PostgreSQL to finish initializing its data directory
+              # before starting Spring Boot. Without this, Spring Boot connects too early,
+              # gets a "Connection refused", and the JVM crashes — killing port 8080 forever.
+              echo "=== DATABASE CHECK: WAITING FOR POSTGRES TO ACCEPT CONNECTIONS ==="
+              for i in {1..30}; do
+                if docker exec staging-db pg_isready -U postgres > /dev/null 2>&1; then
+                  echo "PostgreSQL is ready after $i attempts!"
+                  break
+                fi
+                echo "Database initializing... ($i/30)"
+                sleep 2
+              done
+
               echo "=== RUNTIME CHECK: DEPLOYING API CONTAINER ==="
-              # We pass standard Spring Boot environment configurations to auto-bind to our local database container
+              # --restart=on-failure:3 adds a safety net in case of transient startup errors
               docker run -d \
                 --name staging-app \
                 --network staging-network \
+                --restart=on-failure:3 \
                 -p 8080:8080 \
                 -e SPRING_DATASOURCE_URL=jdbc:postgresql://staging-db:5432/userdb \
                 -e SPRING_DATASOURCE_USERNAME=postgres \
