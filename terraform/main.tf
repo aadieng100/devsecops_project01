@@ -100,9 +100,7 @@ resource "aws_security_group" "app_sg" {
 # 9. Launch the EC2 Virtual Server
 resource "aws_instance" "app_server" {
   #checkov:skip=CKV_AWS_88:Public IP is intentional for our minimal single-instance staging architecture.
-  #checkov:skip=CKV_AWS_135:EBS Optimization is not supported on the free-tier t2.micro instance type.
-  #checkov:skip=CKV2_AWS_41:IAM Role is skipped as our containerized API doesn't need internal access to other AWS APIs yet.
-  
+  #checkov:skip=CKV_AWS_135:EBS Optimization is not supported on the free-tier t2.micro instance type.  
   ami                         = "ami-0c7217cdde317cfec" 
   instance_type               = "t2.micro"             
   subnet_id                   = aws_subnet.public_subnet.id
@@ -110,6 +108,9 @@ resource "aws_instance" "app_server" {
   associate_public_ip_address = true 
   
   monitoring                  = true # FIXES CKV_AWS_126: Detailed monitoring enabled
+
+  # NEW: Attach our structural IAM identity profile directly to the server hardware execution context
+  iam_instance_profile        = aws_iam_instance_profile.ec2_profile.name
 
   # FIXES CKV_AWS_8: Force encryption on the underlying storage blocks
   root_block_device {
@@ -123,7 +124,7 @@ resource "aws_instance" "app_server" {
     http_put_response_hop_limit = 1
   }
 
-  # Telemetry-hardened startup script with companion storage blocks and continuous log streaming
+# Production-hardened startup script with dynamic AWS Secret runtime extraction
   user_data = <<-EOF
               #!/bin/bash
               set -x
@@ -131,48 +132,44 @@ resource "aws_instance" "app_server" {
 
               echo "=== SYSTEM CHECK: PROVISIONING ENGINE ==="
               apt-get update -y
-              apt-get install -y --no-install-recommends docker.io
+              apt-get install -y --no-install-recommends docker.io jq awscli
               systemctl start docker
               systemctl enable docker
 
               echo "=== REGISTRY CHECK: SECURING ACCESS ==="
               echo "${var.github_token}" | docker login ghcr.io -u "${var.github_actor}" --password-stdin
 
-              echo "=== NETWORK CHECK: CREATING ISOLATED BRIDGE ==="
-              docker network create staging-network
+              echo "=== SECRETS CHECK: FETCHING ENGINE FROM AWS VAULT ==="
+              # Fetch the raw encrypted JSON string from Secrets Manager using the server's IAM identity
+              RAW_SECRET=$(aws secretsmanager get-secret-value --secret-id "production-db-credentials-v1" --region "us-east-1" --query SecretString --output text)
 
-              echo "=== COMPANION CHECK: RUNNING LIGHTWEIGHT STAGING DATABASE ==="
+              # Parse the JSON keys cleanly into isolated script variables using jq
+              DB_USER=$(echo "$RAW_SECRET" | jq -r '.username')
+              DB_PASS=$(echo "$RAW_SECRET" | jq -r '.password')
+              DB_NAME=$(echo "$RAW_SECRET" | jq -r '.db_name')
+
+              echo "=== NETWORK CHECK: CREATING ISOLATED BRIDGE ==="
+              docker network create production-network
+
+              echo "=== COMPANION CHECK: RUNNING LIVE PRODUCTION DATABASE ==="
+              # Deploy our production database container mapping directly to the secret variables
               docker run -d \
-                --name staging-db \
-                --network staging-network \
-                -e POSTGRES_DB=userdb \
-                -e POSTGRES_USER=postgres \
-                -e POSTGRES_PASSWORD=postgres \
+                --name production-db \
+                --network production-network \
+                -e POSTGRES_DB="$DB_NAME" \
+                -e POSTGRES_USER="$DB_USER" \
+                -e POSTGRES_PASSWORD="$DB_PASS" \
                 postgres:15-alpine
 
-              # CRITICAL: Wait for PostgreSQL to finish initializing its data directory
-              # before starting Spring Boot. Without this, Spring Boot connects too early,
-              # gets a "Connection refused", and the JVM crashes — killing port 8080 forever.
-              echo "=== DATABASE CHECK: WAITING FOR POSTGRES TO ACCEPT CONNECTIONS ==="
-              for i in {1..30}; do
-                if docker exec staging-db pg_isready -U postgres > /dev/null 2>&1; then
-                  echo "PostgreSQL is ready after $i attempts!"
-                  break
-                fi
-                echo "Database initializing... ($i/30)"
-                sleep 2
-              done
-
               echo "=== RUNTIME CHECK: DEPLOYING API CONTAINER ==="
-              # --restart=on-failure:3 adds a safety net in case of transient startup errors
+              # Pass the dynamically pulled secrets straight into the Spring Boot instance memory heap
               docker run -d \
-                --name staging-app \
-                --network staging-network \
-                --restart=on-failure:3 \
+                --name production-app \
+                --network production-network \
                 -p 8080:8080 \
-                -e SPRING_DATASOURCE_URL=jdbc:postgresql://staging-db:5432/userdb \
-                -e SPRING_DATASOURCE_USERNAME=postgres \
-                -e SPRING_DATASOURCE_PASSWORD=postgres \
+                -e SPRING_DATASOURCE_URL=jdbc:postgresql://production-db:5432/$DB_NAME \
+                -e SPRING_DATASOURCE_USERNAME="$DB_USER" \
+                -e SPRING_DATASOURCE_PASSWORD="$DB_PASS" \
                 -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
                 "${var.image_tag}"
 
@@ -188,4 +185,89 @@ resource "aws_instance" "app_server" {
     Name        = "devsecops-app-server"
     Environment = "staging"
   }
+}
+
+# ========================================================================
+# PHASE 3: AWS SECRETS MANAGER & IAM SECURITY PROVISIONING
+# ========================================================================
+
+# NEW: Instruct Terraform to generate a secure, random 16-character string in memory
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+
+  # SECURE: Prevents accidental password updates if code attributes are changed later
+  lifecycle {
+    ignore_changes = [
+      length,
+      special,
+      override_special
+    ]
+  }
+}
+
+# 10. Create the Secrets Manager Vault Container
+resource "aws_secretsmanager_secret" "db_secret" {
+  #checkov:skip=CKV_AWS_149:Using default AWS Secrets Manager managed encryption key to preserve resource limits for testing.
+  #checkov:skip=CKV2_AWS_57:Automatic rotation is skipped for this standalone setup; native RDS rotation will be implemented in the intermediate project.
+
+  name                    = "production-db-credentials-v1"
+  description             = "Encrypted database credentials for production Spring Boot container"
+  recovery_window_in_days = 0 # Forces immediate deletion if destroyed during testing
+}
+
+# 11. Define the structural payload inside the vault (Dynamic Injection)
+resource "aws_secretsmanager_secret_version" "db_secret_val" {
+  secret_id     = aws_secretsmanager_secret.db_secret.id
+  secret_string = jsonencode({
+    username = "prod_db_admin"
+    password = random_password.db_password.result # SECURE: References the dynamic generator memory node
+    db_name  = "userapi_production"
+  })
+}
+
+# 12. Create the IAM Trust Policy allowing EC2 instances to assume this identity
+resource "aws_iam_role" "ec2_secrets_role" {
+  name = "devsecops-ec2-secrets-access-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+      }
+    ]
+  })
+}
+
+# 13. Create the granular IAM Policy permitting ONLY Read Access to our specific secret
+resource "aws_iam_policy" "secrets_read_policy" {
+  name        = "devsecops-secrets-read-policy"
+  description = "Permits read access to the production database secret wrapper"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [aws_secretsmanager_secret.db_secret.arn]
+      }
+    ]
+  })
+}
+
+# 14. Attach the read policy directly to our structural IAM Role
+resource "aws_iam_role_policy_attachment" "attach_secrets_policy" {
+  role       = aws_iam_role.ec2_secrets_role.name
+  policy_arn = aws_iam_policy.secrets_read_policy.arn
+}
+
+# 15. Generate the AWS Instance Profile bridge required to bind the role to a hardware machine
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "devsecops-ec2-instance-profile"
+  role = aws_iam_role.ec2_secrets_role.name
 }
