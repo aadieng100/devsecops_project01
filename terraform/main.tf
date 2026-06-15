@@ -196,10 +196,22 @@ resource "random_password" "db_password" {
   length           = 16
   special          = true
   override_special = "!#$%&*()-_=+[]{}<>:?"
+
+  # SECURE: Prevents accidental password updates if code attributes are changed later
+  lifecycle {
+    ignore_changes = [
+      length,
+      special,
+      override_special
+    ]
+  }
 }
 
 # 10. Create the Secrets Manager Vault Container
 resource "aws_secretsmanager_secret" "db_secret" {
+  #checkov:skip=CKV_AWS_149:Using default AWS Secrets Manager managed encryption key to preserve resource limits for testing.
+  #checkov:skip=CKV2_AWS_57:Automatic rotation is skipped for this standalone setup; native RDS rotation will be implemented in the intermediate project.
+
   name                    = "production-db-credentials-v1"
   description             = "Encrypted database credentials for production Spring Boot container"
   recovery_window_in_days = 0 # Forces immediate deletion if destroyed during testing
