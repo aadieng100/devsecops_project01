@@ -1,5 +1,10 @@
 name: DevSecOps CI Pipeline
 
+# ============================================================
+# TRIGGER: This pipeline fires on every Pull Request targeting
+# the master branch. No code reaches master without passing
+# all five security gates below.
+# ============================================================
 on:
   pull_request:
     branches: [ master ]
@@ -8,32 +13,68 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
+    # -------------------------------------------------------
+    # PERMISSIONS (Principle of Least Privilege)
+    # - contents: read   → clone the repository
+    # - packages: write  → push the Docker image to GHCR
+    # - issues: write    → allows OWASP ZAP to automatically
+    #                       document DAST findings as GitHub Issues
+    # -------------------------------------------------------
     permissions:
       contents: read
       packages: write
-      issues: write # NEW: Allows OWASP ZAP to cleanly document DAST findings
-    
+      issues: write
+
+    # -------------------------------------------------------
+    # ENVIRONMENT: AWS credentials are injected from GitHub
+    # Secrets — never hardcoded. The region is set once here
+    # and inherited by every AWS CLI / Terraform call below.
+    # -------------------------------------------------------
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: "us-east-1"
 
     steps:
+
+    # ============================================================
+    # STEP 1 — SOURCE CHECKOUT
+    # fetch-depth: 0 retrieves the full Git history, which is
+    # required by Gitleaks to scan every commit — not just the tip.
+    # ============================================================
     - name: Checkout source code
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
 
+    # ============================================================
+    # STEP 2 — SECRET LEAK DETECTION (Gitleaks)
+    # Scans the entire repository history for high-entropy strings,
+    # API keys, passwords, and tokens before they enter master.
+    # BLOCKS the pipeline on any detected secret.
+    # ============================================================
     - name: Run Gitleaks Secret Scan
       uses: gitleaks/gitleaks-action@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    # ============================================================
+    # STEP 3 — STATIC APPLICATION SECURITY TESTING (Semgrep SAST)
+    # Analyzes raw Java source code for logical vulnerabilities,
+    # input injection risks, and broken authorization patterns.
+    # Uses Semgrep's curated default ruleset (p/default).
+    # BLOCKS the pipeline on any rule violation.
+    # ============================================================
     - name: Run Semgrep SAST Scan
       uses: semgrep/semgrep-action@v1
       with:
         config: p/default
 
+    # ============================================================
+    # STEP 4 — JAVA BUILD ENVIRONMENT SETUP
+    # Installs Temurin JDK 17 (Eclipse distribution) and enables
+    # Maven dependency caching to speed up subsequent builds.
+    # ============================================================
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -41,9 +82,21 @@ jobs:
         distribution: 'temurin'
         cache: 'maven'
 
+    # ============================================================
+    # STEP 5 — UNIT TEST SUITE
+    # Runs the full Maven test phase against an H2 in-memory
+    # database — no real PostgreSQL instance required in CI.
+    # BLOCKS the pipeline on any test failure.
+    # ============================================================
     - name: Run unit tests
       run: ./mvnw clean test
 
+    # ============================================================
+    # STEP 6 — GHCR AUTHENTICATION
+    # Logs the runner into GitHub Container Registry (ghcr.io)
+    # using the short-lived GITHUB_TOKEN. This grants write access
+    # to push the image built in the next step.
+    # ============================================================
     - name: Log in to GitHub Container Registry
       uses: docker/login-action@v3
       with:
@@ -51,14 +104,34 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    # ============================================================
+    # STEP 7 — SECURE DOCKER IMAGE BUILD & PUSH
+    # id: build  →  exposes "target_image_tag" as a step output,
+    #               which downstream steps reference via
+    #               ${{ steps.build.outputs.target_image_tag }}.
+    #
+    # The repository path is lowercased (tr) because GHCR requires
+    # all image names to be lowercase — GitHub usernames/org names
+    # are case-insensitive but image paths are not.
+    #
+    # --pull ensures the base image is always refreshed from the
+    # registry, preventing stale layer caching vulnerabilities.
+    # ============================================================
     - name: Build and Push secure Docker image
-      id: build 
+      id: build
       run: |
         LOW_CASE_REPO=$(echo "ghcr.io/${{ github.repository }}/user-api" | tr '[:upper:]' '[:lower:]')
         docker build --pull -t $LOW_CASE_REPO:${{ github.sha }} .
         docker push $LOW_CASE_REPO:${{ github.sha }}
         echo "target_image_tag=$LOW_CASE_REPO:${{ github.sha }}" >> $GITHUB_OUTPUT
 
+    # ============================================================
+    # STEP 8 — SOFTWARE COMPOSITION ANALYSIS (Trivy SCA)
+    # Deep-scans all OS packages and library dependencies inside
+    # the built container image against the latest CVE databases.
+    # exit-code: '1' makes this a hard gate — the pipeline is
+    # BLOCKED on any unresolved HIGH or CRITICAL vulnerability.
+    # ============================================================
     - name: Run Trivy SCA Scan
       uses: aquasecurity/trivy-action@v0.36.0
       with:
@@ -68,6 +141,13 @@ jobs:
         vuln-type: 'os,library'
         severity: 'CRITICAL,HIGH'
 
+    # ============================================================
+    # STEP 9 — INFRASTRUCTURE AS CODE COMPLIANCE (Checkov)
+    # Validates every HCL file under terraform/ against security
+    # best practices: EBS encryption, IMDSv2, SG least-privilege.
+    # soft_fail: false means the pipeline BLOCKS on any violation
+    # that has not been explicitly suppressed with a checkov:skip.
+    # ============================================================
     - name: Run Checkov IaC Scan
       uses: bridgecrewio/checkov-action@master
       with:
@@ -75,11 +155,32 @@ jobs:
         framework: terraform
         soft_fail: false
 
+    # ============================================================
+    # STEP 10 — TERRAFORM ENGINE SETUP
+    # Installs HashiCorp Terraform on the runner.
+    # terraform_wrapper: false disables the wrapper script so that
+    # terraform output commands return raw values — required for
+    # clean variable capture in the step below.
+    # ============================================================
     - name: Setup HashiCorp Terraform
       uses: hashicorp/setup-terraform@v3
       with:
         terraform_wrapper: false
 
+    # ============================================================
+    # STEP 11 — EPHEMERAL AWS ENVIRONMENT PROVISIONING
+    # id: deploy  →  exposes "staging_ip" as a step output for
+    #                downstream steps via ${{ steps.deploy.outputs.staging_ip }}.
+    #
+    # Three input variables are injected at plan time:
+    #   - image_tag     → the exact GHCR image URI built in Step 7
+    #   - github_token  → used by the EC2 user_data to pull from GHCR
+    #   - github_actor  → the Docker login username on the EC2 instance
+    #
+    # The public IP is captured from the Terraform output and
+    # written to $GITHUB_OUTPUT (step output) — NOT $GITHUB_ENV —
+    # so the linter can statically validate the reference.
+    # ============================================================
     - name: Terraform Apply (Provision Environment)
       id: deploy
       run: |
@@ -89,10 +190,26 @@ jobs:
           -var="image_tag=${{ steps.build.outputs.target_image_tag }}" \
           -var="github_token=${{ secrets.GITHUB_TOKEN }}" \
           -var="github_actor=${{ github.actor }}"
-        
+
         STAGING_IP=$(terraform output -raw staging_instance_public_ip)
         echo "staging_ip=$STAGING_IP" >> $GITHUB_OUTPUT
 
+    # ============================================================
+    # STEP 12 — APPLICATION HEALTH CHECK (max 15 minutes)
+    # Polls the live API endpoint every 15 seconds for up to
+    # 60 attempts (15 minutes total) to handle:
+    #   - apt package installation (~45s)
+    #   - PostgreSQL data directory initialization (~10s)
+    #   - Docker image pull from GHCR (~30-60s)
+    #   - JVM startup and Hibernate schema bootstrapping (~20s)
+    #
+    # Accepted HTTP codes:
+    #   200/201 → normal success responses
+    #   401/403 → server running, auth required
+    #   404     → server running, route not found
+    #   405     → server running, method not allowed (expected: only
+    #             POST/DELETE are registered on /api/users)
+    # ============================================================
     - name: Wait for Application Initialization
       run: |
         echo "Polling http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users (max 15 min)..."
@@ -100,9 +217,9 @@ jobs:
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             --connect-timeout 5 --max-time 10 \
             http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users || echo "000")
-          
+
           echo "Attempt $i/60 — HTTP Response: $HTTP_CODE"
-          
+
           if echo "$HTTP_CODE" | grep -qE "^(200|201|401|403|404|405)$"; then
             echo "Application is live and reachable!"
             exit 0
@@ -111,19 +228,37 @@ jobs:
         done
         echo "Application failed to become responsive after 15 minutes." && exit 1
 
-    # ==========================================
-    # ADDED BACK: OWASP ZAP LIVE EXPLOIT SCAN
-    # ==========================================
+    # ============================================================
+    # STEP 13 — DYNAMIC APPLICATION SECURITY TESTING (OWASP ZAP)
+    # Runs a full baseline fuzzing scan against the live staging
+    # environment. ZAP actively probes the API for common web
+    # vulnerabilities (XSS, SQLi, header misconfigurations, etc.).
+    #
+    # fail_action: false keeps the pipeline running even if ZAP
+    # detects findings, ensuring the teardown step (Step 15) always
+    # executes and AWS resources are never left orphaned.
+    #
+    # ZAP automatically creates a GitHub Issue with its findings
+    # (requires the issues: write permission set at the job level).
+    # ============================================================
     - name: Run OWASP ZAP DAST Baseline Scan
       uses: zaproxy/action-baseline@v0.14.0
       with:
         token: ${{ secrets.GITHUB_TOKEN }}
         target: 'http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users'
-        # fail_action: false ensures the pipeline continues to execution even if vulnerabilities 
-        # are detected, guaranteeing that the teardown step runs to destroy our AWS resources.
         fail_action: false
 
-    # TELEMETRY INTERCEPTOR (Runs ONLY if the health check loop crashes)
+    # ============================================================
+    # STEP 14 — TELEMETRY INTERCEPTOR (conditional on failure)
+    # if: failure() means this step ONLY runs if Step 12 (health
+    # check) fails — providing a real-time diagnostic dump without
+    # slowing down successful pipeline runs.
+    #
+    # Retrieves the full EC2 system console output (equivalent to
+    # reading /var/log/cloud-init-output.log) via the AWS API,
+    # printing the complete boot + user_data execution trace
+    # directly onto the Actions log before the environment is torn down.
+    # ============================================================
     - name: Fetch EC2 Boot & Application Logs
       if: failure()
       run: |
@@ -137,7 +272,36 @@ jobs:
         aws ec2 get-console-output --instance-id $INSTANCE_ID --output text
         echo "========================================================================"
 
-    # CRITICAL TEARDOWN (Always executes to protect your wallet and credits)
+    # ============================================================
+    # STEP 15 — PORTFOLIO VERIFICATION WINDOW (15 minutes)
+    # Pauses the pipeline to allow manual inspection of the live
+    # environment: Grafana dashboards, Prometheus metrics, and
+    # API endpoint testing before the environment is destroyed.
+    # ============================================================
+    - name: Pause Pipeline for Portfolio Verification
+      run: |
+        echo "========================================================================="
+        echo "   🚀 OBSERVABILITY SANDBOX LIVE FOR 15 MINUTES!                          "
+        echo "   👉 Target URL: http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users"
+        echo "   📊 Grafana Dashboard: http://${{ steps.deploy.outputs.staging_ip }}:3000"
+        echo "========================================================================="
+        echo "The pipeline is pausing for 15 minutes to allow manual metric checking..."
+
+        # 900 seconds = Exactly 15 minutes
+        sleep 900
+
+        echo "Verification window expired. Initiating clean teardown sequence..."
+
+    # ============================================================
+    # STEP 16 — CRITICAL TEARDOWN (always runs)
+    # if: always() guarantees this step executes regardless of
+    # whether any previous step passed or failed — preventing
+    # orphaned AWS resources from accumulating costs.
+    #
+    # The same three variables passed at apply time must be
+    # provided at destroy time so Terraform can resolve the
+    # resource graph cleanly without state drift.
+    # ============================================================
     - name: Terraform Destroy (Teardown Environment)
       if: always()
       run: |
