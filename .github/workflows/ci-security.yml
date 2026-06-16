@@ -137,6 +137,20 @@ jobs:
         aws ec2 get-console-output --instance-id $INSTANCE_ID --output text
         echo "========================================================================"
 
+    # NEW STEP 12.5: PORTFOLIO SCREENSHOT & VERIFICATION WINDOW (15 Minutes)
+    - name: Pause Pipeline for Portfolio Verification
+      run: |
+        echo "========================================================================="
+        echo "   🚀 OBSERVABILITY SANDBOX LIVE FOR 15 MINUTES!                          "
+        echo "   👉 Target URL: http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users"
+        echo "   📊 Grafana Dashboard: http://${{ steps.deploy.outputs.staging_ip }}:3000"
+        echo "========================================================================="
+        echo "The pipeline is pausing for 15 minutes to allow manual metric checking..."
+        
+        # 900 seconds = Exactly 15 minutes
+        sleep 900
+        
+        echo "Verification window expired. Initiating clean teardown sequence..."
     # CRITICAL TEARDOWN (Always executes to protect your wallet and credits)
     - name: Terraform Destroy (Teardown Environment)
       if: always()
