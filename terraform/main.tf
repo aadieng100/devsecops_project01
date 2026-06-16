@@ -84,6 +84,15 @@ resource "aws_security_group" "app_sg" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Inbound rule allowing secure entry to our Grafana visualization engine
+  ingress {
+    description = "Allow Grafana Dashboard access"
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"] # In a strict corporate environment, this would be locked to your specific home IP
+  }
+
   egress {
     description = "Allow all outbound traffic" # FIXES CKV_AWS_23: Explicit description added
     from_port   = 0
@@ -162,23 +171,54 @@ resource "aws_instance" "app_server" {
                 postgres:15-alpine
 
               echo "=== RUNTIME CHECK: DEPLOYING API CONTAINER ==="
-              # Pass the dynamically pulled secrets straight into the Spring Boot instance memory heap
+              # Ports mapping: Exposing business logic on 8080 and actuator logs on 8081 internally
               docker run -d \
                 --name production-app \
                 --network production-network \
                 -p 8080:8080 \
+                -p 8081:8081 \
                 -e SPRING_DATASOURCE_URL=jdbc:postgresql://production-db:5432/$DB_NAME \
                 -e SPRING_DATASOURCE_USERNAME="$DB_USER" \
                 -e SPRING_DATASOURCE_PASSWORD="$DB_PASS" \
                 -e SPRING_JPA_HIBERNATE_DDL_AUTO=update \
                 "${var.image_tag}"
 
-              echo "=== TELEMETRY CHECK: ACTIVATING CONTINUOUS LOG STREAMING ==="
-              # The "&" symbol forks this process to the background. 
-              # It will continuously pipe live Java app logs to the AWS system console for the entire run!
-              docker logs -f staging-app &
+              echo "=== TELEMETRY CONFIGURATION: CREATING PROMETHEUS SCRAPER FILE ==="
+              mkdir -p /etc/prometheus
+              
+              # Generate the scraping rules targeting our isolated application container port
+              cat << 'CONFIG' > /etc/prometheus/prometheus.yml
+              global:
+                scrape_interval: 5s
+                evaluation_interval: 5s
 
-              echo "=== BOOTSTRAP PIPELINE INITIALIZATION COMPLETE ==="
+              scrape_configs:
+                - job_name: 'spring-boot-actuator'
+                  metrics_path: '/telemetry/prometheus'
+                  static_configs:
+                    - targets: ['production-app:8081']
+              CONFIG
+
+              echo "=== TELEMETRY RUNTIME: DEPLOYING PROMETHEUS CONTAINER ==="
+              docker run -d \
+                --name prometheus \
+                --network production-network \
+                -p 9090:9090 \
+                -v /etc/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml \
+                prom/prometheus:v2.45.0
+
+              echo "=== VISUALIZATION RUNTIME: DEPLOYING GRAFANA ENGINE ==="
+              docker run -d \
+                --name grafana \
+                --network production-network \
+                -p 3000:3000 \
+                -e GF_SECURITY_ADMIN_PASSWORD="SuperSecureGrafana2026!" \
+                grafana/grafana:10.0.0
+
+              echo "=== TELEMETRY CHECK: ACTIVATING LOG FORK ==="
+              docker logs -f production-app &
+
+              echo "=== PRODUCTION OBSERVABILITY DEPLOYMENT COMPLETE ==="
               EOF
 
   tags = {
