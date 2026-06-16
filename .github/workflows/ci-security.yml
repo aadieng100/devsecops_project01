@@ -287,8 +287,8 @@ jobs:
         echo "========================================================================="
         echo "The pipeline is pausing for 15 minutes to allow manual metric checking..."
 
-        # 900 seconds = Exactly 15 minutes
-        sleep 900
+        # uncomment below (900 seconds = Exactly 15 minutes) 
+        # sleep 900 
 
         echo "Verification window expired. Initiating clean teardown sequence..."
 
