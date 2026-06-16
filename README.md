@@ -1,4 +1,4 @@
-<![CDATA[<div align="center">
+<div align="center">
 
 # 🛡️ Production-Hardened DevSecOps Lifecycle Pipeline
 
@@ -149,7 +149,7 @@ All cloud resources are managed via Terraform in `terraform/`:
 devsecops_project01/
 ├── .github/
 │   └── workflows/
-│       └── ci-security.yml          ← 13-step automated pipeline
+│       └── ci-security.yml          ← 16-step automated pipeline
 ├── terraform/
 │   ├── main.tf                      ← All AWS resources + user_data bootstrap
 │   ├── variables.tf                 ← image_tag, github_token, github_actor
@@ -163,6 +163,7 @@ devsecops_project01/
 │       │   └── controller/UserController.java
 │       └── resources/
 │           └── application.properties   ← Port 8080 (API) + 8081 (actuator)
+├── docs/                            ← Live telemetry screenshots
 ├── Dockerfile                       ← Distroless multi-stage image
 ├── pom.xml                          ← Spring Boot 3 + Actuator + Micrometer
 └── .semgrepignore
@@ -184,9 +185,23 @@ The management endpoint is **completely decoupled** from the application port (`
 
 ### Grafana Live Metrics Dashboard
 
-During active traffic simulations (100 sequential endpoint executions), the dashboard captured real-time JVM adjustments, HTTP request rates, and HikariCP pool consumption:
+During active traffic simulations (100 sequential endpoint executions), the dashboard captured real-time JVM memory adjustments, HTTP request throughput, and HikariCP pool consumption:
 
-![Live Grafana Dashboard — JVM Telemetry Capture](./docs/grafana-dashboard.png)
+![Live Grafana Dashboard — Full Observability View](./docs/grafana-dashboard.png)
+
+### Metric Deep-Dives
+
+**JVM Heap vs Non-Heap Memory** — tracked in real time, confirming stable memory behaviour under load with no signs of memory leak or excessive GC pressure:
+
+![JVM Heap and Non-Heap Memory Utilization](./docs/heap_non-heap.png)
+
+**HTTP Request Rate** — captures the exact volume and distribution of requests hitting `/api/users` during the traffic simulation, validating that Micrometer is correctly tagging and exporting per-endpoint metrics:
+
+![HTTP Server Request Rate](./docs/http-requests.png)
+
+**HikariCP Active Connections** — confirms the database connection pool is live and responding, proving the full PostgreSQL integration chain (Secrets Manager → Docker network → JDBC → Hibernate) is operational:
+
+![HikariCP Active Database Connections](./docs/hikaricp-connections.png)
 
 ### Metrics Collected (via Micrometer + Prometheus)
 
@@ -304,6 +319,7 @@ WARN-NEW: Storable and Cacheable Content [10049] x 3
 | `DELETE` | `/api/users/{id}` | — | `204 No Content` / `404` |
 
 **Internal Telemetry:**
+
 | Endpoint | Port | Description |
 |----------|------|-------------|
 | `/telemetry/prometheus` | `8081` | Prometheus metrics scrape target |
@@ -382,4 +398,3 @@ curl http://localhost:8081/telemetry/prometheus
 *Spring Boot 3 · PostgreSQL · Docker · Terraform · AWS EC2 · Secrets Manager · IAM · GitHub Actions · Gitleaks · Semgrep · Trivy · Checkov · OWASP ZAP · Prometheus · Grafana*
 
 </div>
-]]>
