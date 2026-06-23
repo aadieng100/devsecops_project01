@@ -247,6 +247,8 @@ jobs:
         token: ${{ secrets.GITHUB_TOKEN }}
         target: 'http://${{ steps.deploy.outputs.staging_ip }}:8080/api/users'
         fail_action: false
+        rules_file_name: '.zap/rules.tsv'
+
 
     # ============================================================
     # STEP 14 — TELEMETRY INTERCEPTOR (conditional on failure)

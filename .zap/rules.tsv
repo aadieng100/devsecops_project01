@@ -1,0 +1,8 @@
+# ZAP baseline scan alert configuration
+# Format: alert_id  action  (IGNORE / WARN / FAIL)
+#
+# 10049 Non-Storable Content – IGNORE
+#   Our SecurityHeadersFilter intentionally sets Cache-Control: no-store on all
+#   responses because the API may return user-specific data. ZAP flagging this
+#   as "Non-Storable Content" is expected and correct behaviour, not a finding.
+10049	IGNORE	(Non-Storable Content)
