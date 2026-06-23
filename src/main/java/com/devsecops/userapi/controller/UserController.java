@@ -8,6 +8,8 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+
 @RestController
 @RequestMapping("/api/users")
 public class UserController {
@@ -16,6 +18,18 @@ public class UserController {
 
     public UserController(UserRepository userRepository) {
         this.userRepository = userRepository;
+    }
+
+    /**
+     * GET /api/users
+     * Returns all users.
+     * Satisfies the REST convention for a collection resource and prevents
+     * ZAP's spider from receiving a 405 Method Not Allowed when it probes
+     * the target URL with a GET request.
+     */
+    @GetMapping
+    public ResponseEntity<List<User>> listUsers() {
+        return ResponseEntity.ok(userRepository.findAll());
     }
 
     /**
